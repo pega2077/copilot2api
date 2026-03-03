@@ -1,3 +1,6 @@
+import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import { CopilotClient, type ModelInfo } from "@github/copilot-sdk";
 
 let sharedClient: CopilotClient | null = null;
@@ -46,4 +49,78 @@ export async function shutdown(): Promise<void> {
     sharedClient = null;
     startPromise = null;
   }
+}
+
+/**
+ * Returns the path to the bundled Copilot CLI entry point.
+ */
+function getCopilotCliPath(): string {
+  let sdkUrl: string;
+  try {
+    sdkUrl = import.meta.resolve("@github/copilot/sdk");
+  } catch {
+    throw new Error(
+      "Could not resolve the bundled Copilot CLI. Ensure @github/copilot is installed (it ships as a dependency of @github/copilot-sdk)."
+    );
+  }
+  return join(dirname(dirname(fileURLToPath(sdkUrl))), "index.js");
+}
+
+/**
+ * Checks Copilot authentication status on startup.
+ * If an environment token is present the check is skipped.
+ * Otherwise the shared client is started and `getAuthStatus()` is called.
+ * When the CLI reports that it is not authenticated, the interactive
+ * `copilot login` OAuth device-flow is launched so the user can sign in.
+ * After a successful login the shared client is reset so that subsequent
+ * calls to `getClient()` pick up the newly stored credentials.
+ */
+export async function ensureAuthenticated(): Promise<void> {
+  // Use truthy check so that empty-string env vars are treated as absent.
+  const hasEnvToken = Boolean(
+    process.env["COPILOT_GITHUB_TOKEN"] ||
+    process.env["GITHUB_TOKEN"] ||
+    process.env["GH_TOKEN"]
+  );
+
+  if (hasEnvToken) {
+    return;
+  }
+
+  // The shared client must be started to query authentication status –
+  // there is no lighter-weight mechanism exposed by the SDK.
+  const client = await getClient();
+  const authStatus = await client.getAuthStatus();
+
+  if (authStatus.isAuthenticated) {
+    const who = authStatus.login ? ` as ${authStatus.login}` : "";
+    console.log(`Authenticated${who} via ${authStatus.authType ?? "unknown"}`);
+    return;
+  }
+
+  console.log("Not authenticated. Starting Copilot login...");
+
+  await new Promise<void>((resolve, reject) => {
+    const proc = spawn(process.execPath, [getCopilotCliPath(), "login"], {
+      stdio: "inherit",
+    });
+    proc.on("exit", (code) => {
+      if (code === 0) {
+        resolve();
+      } else {
+        reject(
+          new Error(
+            `Copilot login failed with exit code ${code}. ` +
+            `Check your network connection and GitHub permissions, ` +
+            `or run "copilot login" manually.`
+          )
+        );
+      }
+    });
+    proc.on("error", reject);
+  });
+
+  // Reset the shared client so the next call to getClient() starts fresh
+  // and picks up the newly stored credentials.
+  await shutdown();
 }

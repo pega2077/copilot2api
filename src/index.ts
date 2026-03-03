@@ -1,7 +1,9 @@
 import { createApp } from "./server.js";
-import { shutdown } from "./copilot.js";
+import { shutdown, ensureAuthenticated } from "./copilot.js";
 
 const PORT = parseInt(process.env["PORT"] ?? "3000", 10);
+
+await ensureAuthenticated();
 
 const app = createApp();
 
