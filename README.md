@@ -84,6 +84,45 @@ curl http://localhost:3000/v1/chat/completions \
   }'
 ```
 
+**JSON 模式 (格式化输出):**
+
+```bash
+curl http://localhost:3000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gpt-4-o",
+    "messages": [
+      {"role": "system", "content": "You are a helpful assistant. Respond in valid JSON."},
+      {"role": "user", "content": "Return a JSON object with the keys \"name\" and \"age\" for a fictional character."}
+    ],
+    "response_format": { "type": "json_object" }
+  }'
+```
+
+**多模态 (图片分析):**
+
+```bash
+curl http://localhost:3000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gpt-4-o",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          { "type": "text", "text": "这幅图中有什么？" },
+          {
+            "type": "image_url",
+            "image_url": {
+              "url": "https://wallpapers.com/images/hd/cute-cats-pictures-ofp9qyt72qck6jqg.jpg"
+            }
+          }
+        ]
+      }
+    ]
+  }'
+```
+
 ## Using with OpenAI SDK
 
 ```typescript
