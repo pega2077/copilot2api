@@ -1,4 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { writeFile, unlink } from "node:fs/promises";
 import { type Request, type Response } from "express";
 import { approveAll, type CopilotSession } from "@github/copilot-sdk";
 import { getClient } from "../copilot.js";
@@ -7,8 +10,64 @@ import type {
   ChatCompletionResponse,
   ChatCompletionChunk,
   Message,
+  ContentPart,
   ErrorResponse,
 } from "../types/openai.js";
+
+/**
+ * Extracts plain text from a message's content (string or ContentPart array).
+ */
+function messageContentToText(content: string | ContentPart[]): string {
+  if (typeof content === "string") {
+    return content;
+  }
+  return content
+    .filter((p): p is Extract<ContentPart, { type: "text" }> => p.type === "text")
+    .map((p) => p.text)
+    .join("\n");
+}
+
+/**
+ * Extracts image URLs from a message's content (string or ContentPart array).
+ */
+function extractImageUrls(content: string | ContentPart[]): string[] {
+  if (typeof content === "string") {
+    return [];
+  }
+  return content
+    .filter((p): p is Extract<ContentPart, { type: "image_url" }> => p.type === "image_url")
+    .map((p) => p.image_url.url);
+}
+
+/**
+ * Maps common image MIME types to file extensions.
+ */
+const MIME_TO_EXT: Record<string, string> = {
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/gif": "gif",
+  "image/webp": "webp",
+  "image/bmp": "bmp",
+  "image/tiff": "tiff",
+  "image/svg+xml": "svg",
+};
+
+/**
+ * Downloads an image from a URL and writes it to a temporary file.
+ * Returns the path to the temp file.
+ */
+async function downloadImageToTempFile(url: string): Promise<string> {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch image from ${url}: ${response.status} ${response.statusText}`);
+  }
+  const contentType = (response.headers.get("content-type") ?? "image/jpeg").split(";")[0].trim();
+  const ext = MIME_TO_EXT[contentType] ?? "jpg";
+  const tmpPath = join(tmpdir(), `copilot-img-${randomUUID()}.${ext}`);
+  const buffer = await response.arrayBuffer();
+  await writeFile(tmpPath, Buffer.from(buffer));
+  return tmpPath;
+}
 
 /**
  * Builds the system message content from the OpenAI messages array.
@@ -19,10 +78,11 @@ import type {
 function buildSystemAndPrompt(messages: Message[]): {
   systemContent: string | undefined;
   prompt: string;
+  imageUrls: string[];
 } {
   const systemParts = messages
     .filter((m) => m.role === "system")
-    .map((m) => m.content);
+    .map((m) => messageContentToText(m.content));
 
   const nonSystem = messages.filter((m) => m.role !== "system");
 
@@ -38,7 +98,7 @@ function buildSystemAndPrompt(messages: Message[]): {
 
   if (priorNonSystem.length > 0) {
     const historyLines = priorNonSystem.map(
-      (m) => `${m.role === "user" ? "Human" : "Assistant"}: ${m.content}`
+      (m) => `${m.role === "user" ? "Human" : "Assistant"}: ${messageContentToText(m.content)}`
     );
     const historyBlock = `Prior conversation:\n${historyLines.join("\n")}`;
     systemContent = [...systemParts, historyBlock].join("\n\n") || undefined;
@@ -46,7 +106,9 @@ function buildSystemAndPrompt(messages: Message[]): {
     systemContent = systemParts.join("\n\n");
   }
 
-  return { systemContent, prompt: lastMsg.content };
+  const imageUrls = extractImageUrls(lastMsg.content);
+
+  return { systemContent, prompt: messageContentToText(lastMsg.content), imageUrls };
 }
 
 /**
@@ -77,9 +139,10 @@ export async function chatCompletionsHandler(
 
   let systemContent: string | undefined;
   let prompt: string;
+  let imageUrls: string[];
 
   try {
-    ({ systemContent, prompt } = buildSystemAndPrompt(body.messages));
+    ({ systemContent, prompt, imageUrls } = buildSystemAndPrompt(body.messages));
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const body2: ErrorResponse = { error: { message, type: "invalid_request_error" } };
@@ -100,6 +163,26 @@ export async function chatCompletionsHandler(
     return;
   }
 
+  // Download image URLs to temp files so they can be attached to the session.
+  const tempFiles: string[] = [];
+  let attachments: Array<{ type: "file"; path: string; displayName: string }> = [];
+  try {
+    for (const url of imageUrls) {
+      const tmpPath = await downloadImageToTempFile(url);
+      tempFiles.push(tmpPath);
+      attachments.push({ type: "file", path: tmpPath, displayName: new URL(url).pathname.split("/").pop() ?? "image" });
+    }
+  } catch (err) {
+    // Clean up any partially downloaded files.
+    for (const f of tempFiles) {
+      await unlink(f).catch(() => undefined);
+    }
+    const message = err instanceof Error ? err.message : String(err);
+    const errBody: ErrorResponse = { error: { message, type: "server_error" } };
+    res.status(500).json(errBody);
+    return;
+  }
+
   const session = await client.createSession({
     model: body.model,
     onPermissionRequest: approveAll,
@@ -110,12 +193,15 @@ export async function chatCompletionsHandler(
 
   try {
     if (body.stream) {
-      await handleStreaming(res, session, prompt, completionId, created, body.model);
+      await handleStreaming(res, session, prompt, attachments, completionId, created, body.model);
     } else {
-      await handleNonStreaming(res, session, prompt, completionId, created, body.model);
+      await handleNonStreaming(res, session, prompt, attachments, completionId, created, body.model);
     }
   } finally {
     await session.destroy().catch(() => undefined);
+    for (const f of tempFiles) {
+      await unlink(f).catch(() => undefined);
+    }
   }
 }
 
@@ -123,6 +209,7 @@ async function handleStreaming(
   res: Response,
   session: CopilotSession,
   prompt: string,
+  attachments: Array<{ type: "file"; path: string; displayName: string }>,
   completionId: string,
   created: number,
   model: string
@@ -178,7 +265,7 @@ async function handleStreaming(
     });
   });
 
-  await session.send({ prompt });
+  await session.send({ prompt, ...(attachments.length > 0 ? { attachments } : {}) });
   await done;
 }
 
@@ -186,11 +273,12 @@ async function handleNonStreaming(
   res: Response,
   session: CopilotSession,
   prompt: string,
+  attachments: Array<{ type: "file"; path: string; displayName: string }>,
   completionId: string,
   created: number,
   model: string
 ): Promise<void> {
-  const reply = await session.sendAndWait({ prompt });
+  const reply = await session.sendAndWait({ prompt, ...(attachments.length > 0 ? { attachments } : {}) });
   const content: string = reply?.data?.content ?? "";
 
   const response: ChatCompletionResponse = {
