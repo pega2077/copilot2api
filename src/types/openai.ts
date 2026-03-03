@@ -4,9 +4,24 @@
 
 export type MessageRole = "system" | "user" | "assistant";
 
+export interface TextContentPart {
+  type: "text";
+  text: string;
+}
+
+export interface ImageUrlContentPart {
+  type: "image_url";
+  image_url: {
+    url: string;
+    detail?: "auto" | "low" | "high";
+  };
+}
+
+export type ContentPart = TextContentPart | ImageUrlContentPart;
+
 export interface Message {
   role: MessageRole;
-  content: string;
+  content: string | ContentPart[];
 }
 
 export interface ChatCompletionRequest {
