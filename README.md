@@ -99,6 +99,34 @@ curl http://localhost:3000/v1/chat/completions \
   }'
 ```
 
+**图片分析与格式化输出:**
+
+```bash
+curl http://localhost:3000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gpt-4o",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "请分析这张图片的内容，并以 JSON 格式返回。要求包含两个字段: \"image_url\" (图片的 URL) 和 \"description\" (图片的详细描述)。"
+          },
+          {
+            "type": "image_url",
+            "image_url": {
+              "url": "https://raw.githubusercontent.com/github/copilot-sdk/main/docs/assets/copilot-sdk-logo.png"
+            }
+          }
+        ]
+      }
+    ],
+    "response_format": { "type": "json_object" }
+  }'
+```
+
 **多模态 (图片分析):**
 
 ```bash
