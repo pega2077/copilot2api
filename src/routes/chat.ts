@@ -123,6 +123,7 @@ export async function chatCompletionsHandler(
   req: Request,
   res: Response
 ): Promise<void> {
+  const startTime = Date.now();
   const body = req.body as ChatCompletionRequest;
 
   log(`POST /v1/chat/completions model=${body.model ?? "(none)"} stream=${body.stream ?? false} messages=${Array.isArray(body.messages) ? body.messages.length : 0}`);
@@ -207,6 +208,8 @@ export async function chatCompletionsHandler(
     } else {
       await handleNonStreaming(res, session, prompt, attachments, completionId, created, body.model);
     }
+    const duration = Date.now() - startTime;
+    log(`POST /v1/chat/completions completed in ${duration}ms model=${body.model}`);
   } finally {
     await session.destroy().catch(() => undefined);
     for (const f of tempFiles) {
