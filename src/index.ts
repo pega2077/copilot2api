@@ -8,7 +8,7 @@ await ensureAuthenticated();
 const app = createApp();
 
 const server = app.listen(PORT, () => {
-  console.log(`copilotsdk2api listening on http://localhost:${PORT}`);
+  console.log(`copilot2api listening on http://localhost:${PORT}`);
   console.log(`  GET  /v1/models`);
   console.log(`  POST /v1/chat/completions`);
 });

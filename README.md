@@ -1,4 +1,4 @@
-# copilotsdk2api
+# copilot2api
 
 OpenAI-compatible API service backed by the [GitHub Copilot SDK](https://github.com/github/copilot-sdk) (`@github/copilot-sdk`).
 
@@ -185,7 +185,7 @@ console.log(response.choices[0].message.content);
 ```
 OpenAI-compatible client
          ↓ HTTP (OpenAI API format)
-   copilotsdk2api (Express)
+   copilot2api (Express)
          ↓ @github/copilot-sdk (JSON-RPC)
    Copilot CLI (server mode)
          ↓
