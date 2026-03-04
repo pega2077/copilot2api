@@ -19,10 +19,10 @@ export function isImageCompressEnabled(): boolean {
 export function getImageCompressMaxSize(): number {
   const val = process.env["IMAGE_COMPRESS_MAX_SIZE"];
   if (val === undefined || val === "") {
-    return 1920;
+    return 512;
   }
   const parsed = parseInt(val, 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 1920;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 512;
 }
 
 /**
@@ -32,7 +32,7 @@ export function getImageCompressMaxSize(): number {
  * This function works on Windows, Linux, and macOS.
  *
  * @param filePath  Absolute path to the image file to compress.
- * @param maxSize   Maximum width/height in pixels (default: from env / 1920).
+ * @param maxSize   Maximum width/height in pixels (default: from env / 512).
  */
 export async function compressImage(
   filePath: string,
